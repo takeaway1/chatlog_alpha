@@ -125,7 +125,6 @@ func (c *Context) SwitchCurrent(info *wechat.Account) {
 }
 func (c *Context) Refresh() {
 	if c.Current != nil {
-		oldAccount := c.Account
 		c.Account = c.Current.Name
 		c.Platform = c.Current.Platform
 		c.Version = c.Current.Version
@@ -133,27 +132,18 @@ func (c *Context) Refresh() {
 		c.PID = int(c.Current.PID)
 		c.ExePath = c.Current.ExePath
 		c.Status = c.Current.Status
-		// 更新密钥数据 - 如果Current中的密钥为空，也更新Context
-		if c.Current.Key != c.DataKey {
+		// 更新密钥数据 - 总是从Current同步到Context
+		// 仅在Current中的密钥为非空时，才更新Context，以避免覆盖已有的有效密钥
+		if c.Current.Key != "" {
 			c.DataKey = c.Current.Key
 		}
-		if c.Current.ImgKey != c.ImgKey {
+		if c.Current.ImgKey != "" {
 			c.ImgKey = c.Current.ImgKey
 		}
 		if c.Current.DataDir != c.DataDir {
 			c.DataDir = c.Current.DataDir
 		}
 
-		// 如果账号名称发生变化（例如从临时名称变为真实名称），更新历史记录
-		if oldAccount != "" && oldAccount != c.Account {
-			// 将旧的历史记录迁移到新的账号名称下
-			if oldHistory, ok := c.History[oldAccount]; ok {
-				c.History[c.Account] = oldHistory
-				delete(c.History, oldAccount)
-				// 更新配置
-				c.UpdateConfig()
-			}
-		}
 	}
 	if c.DataUsage == "" && c.DataDir != "" {
 		go func() {

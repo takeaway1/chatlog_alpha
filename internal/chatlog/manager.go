@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/rs/zerolog/log"
 	"github.com/sjzar/chatlog/internal/chatlog/conf"
@@ -177,6 +179,86 @@ func (m *Manager) GetDataKey() error {
 	return nil
 }
 
+func (m *Manager) RestartAndGetDataKey() error {
+	if m.ctx.Current == nil {
+		return fmt.Errorf("未选择任何账号")
+	}
+
+	pid := m.ctx.Current.PID
+	exePath := m.ctx.Current.ExePath
+
+	// 1. Terminate the process
+	log.Info().Msgf("Killing WeChat process with PID %d", pid)
+	process, err := os.FindProcess(int(pid))
+	if err != nil {
+		return fmt.Errorf("could not find process with PID %d: %w", pid, err)
+	}
+	if err := process.Kill(); err != nil {
+		return fmt.Errorf("failed to kill process with PID %d: %w", pid, err)
+	}
+
+	// 2. Wait for the process to disappear
+	log.Info().Msg("Waiting for WeChat process to terminate...")
+	for i := 0; i < 10; i++ { // Wait for max 10 seconds
+		instances := m.wechat.GetWeChatInstances()
+		found := false
+		for _, inst := range instances {
+			if inst.PID == pid {
+				found = true
+				break
+			}
+		}
+		if !found {
+			break
+		}
+		time.Sleep(1 * time.Second)
+	}
+
+	// 3. Restart WeChat
+	log.Info().Msgf("Restarting WeChat from %s", exePath)
+	cmd := exec.Command(exePath)
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to restart WeChat: %w", err)
+	}
+
+	// 4. Wait for the new process to appear.
+	log.Info().Msg("Waiting for new WeChat process to start...")
+	var newInstance *iwechat.Account
+	for i := 0; i < 30; i++ { // Wait for max 30 seconds
+		instances := m.wechat.GetWeChatInstances()
+		// Try to find a new instance. A new instance is one with a different PID.
+		for _, inst := range instances {
+			if inst.PID != pid && inst.ExePath == exePath {
+				newInstance = inst
+				break
+			}
+		}
+		if newInstance != nil {
+			break
+		}
+		time.Sleep(1 * time.Second)
+	}
+
+	if newInstance == nil {
+		return fmt.Errorf("failed to find new WeChat process after restart")
+	}
+	log.Info().Msgf("Found new WeChat process with PID %d", newInstance.PID)
+
+	// 5. Switch to the new instance
+	m.ctx.SwitchCurrent(newInstance)
+
+	// 6. Get the key
+	log.Info().Msg("Getting key from new WeChat process...")
+	if _, err := m.wechat.GetDataKey(m.ctx.Current); err != nil {
+		return err
+	}
+	m.ctx.Refresh()
+	m.ctx.UpdateConfig()
+
+	log.Info().Msg("Successfully got key from new WeChat process.")
+	return nil
+}
+
 func (m *Manager) DecryptDBFiles() error {
 	if m.ctx.DataKey == "" {
 		if m.ctx.Current == nil {
@@ -256,6 +338,11 @@ func (m *Manager) CommandKey(configPath string, pid int, force bool, showXorKey 
 	}
 
 	if len(m.ctx.WeChatInstances) == 1 {
+		// 确保当前账户已设置
+		if m.ctx.Current == nil {
+			m.ctx.SwitchCurrent(m.ctx.WeChatInstances[0])
+		}
+
 		key, imgKey := m.ctx.DataKey, m.ctx.ImgKey
 		if len(key) == 0 || len(imgKey) == 0 || force {
 			key, imgKey, err = m.ctx.WeChatInstances[0].GetKey(context.Background())
@@ -284,6 +371,11 @@ func (m *Manager) CommandKey(configPath string, pid int, force bool, showXorKey 
 	}
 	for _, ins := range m.ctx.WeChatInstances {
 		if ins.PID == uint32(pid) {
+			// 确保当前账户已设置
+			if m.ctx.Current == nil || m.ctx.Current.PID != ins.PID {
+				m.ctx.SwitchCurrent(ins)
+			}
+
 			key, imgKey := ins.Key, ins.ImgKey
 			if len(key) == 0 || len(imgKey) == 0 || force {
 				key, imgKey, err = ins.GetKey(context.Background())

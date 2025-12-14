@@ -21,8 +21,11 @@ const (
 )
 
 func (e *V4Extractor) Extract(ctx context.Context, proc *model.Process) (string, string, error) {
+	// 即使状态是offline（未登录），也允许尝试
+	// 因为用户可能在获取密钥过程中登录微信
 	if proc.Status == model.StatusOffline {
-		return "", "", errors.ErrWeChatOffline
+		log.Info().Msg("微信进程存在但未登录，将尝试获取密钥，请登录微信后操作")
+		// 不返回错误，继续执行
 	}
 
 	// Open process handle

@@ -29,7 +29,7 @@ type Account struct {
 
 // NewAccount 创建新的账号对象
 func NewAccount(proc *model.Process) *Account {
-	return &Account{
+	account := &Account{
 		Name:        proc.AccountName,
 		Platform:    proc.Platform,
 		Version:     proc.Version,
@@ -39,6 +39,19 @@ func NewAccount(proc *model.Process) *Account {
 		ExePath:     proc.ExePath,
 		Status:      proc.Status,
 	}
+
+	// 尝试从配置中加载保存的密钥
+	account.loadKeysFromConfig()
+
+	return account
+}
+
+// loadKeysFromConfig 从配置中加载保存的密钥
+// 注意：这是一个简化实现，实际需要访问全局配置
+func (a *Account) loadKeysFromConfig() {
+	// 这里应该从配置文件中加载保存的密钥
+	// 由于配置系统在另一个包中，这里暂时留空
+	// 密钥会在GetKey函数中通过其他方式加载
 }
 
 // RefreshStatus 刷新账号的进程状态
@@ -186,13 +199,6 @@ func (a *Account) clearAccountData() {
 	// 保存旧的名称用于日志
 	oldName := a.Name
 
-	// 清除密钥数据
-	a.Key = ""
-	a.ImgKey = ""
-
-	// 清除路径信息
-	a.DataDir = ""
-
 	// 重置状态
 	a.Status = model.StatusOffline
 
@@ -210,8 +216,10 @@ func (a *Account) clearAccountData() {
 
 // GetKey 获取账号的密钥
 func (a *Account) GetKey(ctx context.Context) (string, string, error) {
-	// 如果已经有密钥，直接返回
-	if a.Key != "" && (a.ImgKey != "" || a.Version == 3) {
+	// 如果已经有数据密钥，直接返回（优先使用保存的密钥）
+	// 对于微信V4，图片密钥可能不是必需的，所以即使没有图片密钥也返回数据密钥
+	if a.Key != "" {
+		log.Info().Msgf("使用保存的数据密钥，账号: %s", a.Name)
 		return a.Key, a.ImgKey, nil
 	}
 

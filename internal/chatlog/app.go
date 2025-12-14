@@ -101,7 +101,7 @@ func (a *App) updateMenuItemsState() {
 	// 查找并更新自动解密菜单项
 	for _, item := range a.menu.GetItems() {
 		// 更新自动解密菜单项
-		if item.Index == 5 {
+		if item.Index == 6 {
 			if a.ctx.AutoDecrypt {
 				item.Name = "停止自动解密"
 				item.Description = "停止监控数据目录更新，不再自动解密新增数据"
@@ -112,7 +112,7 @@ func (a *App) updateMenuItemsState() {
 		}
 
 		// 更新HTTP服务菜单项
-		if item.Index == 4 {
+		if item.Index == 5 {
 			if a.ctx.HTTPEnabled {
 				item.Name = "停止 HTTP 服务"
 				item.Description = "停止本地 HTTP & MCP 服务器"
@@ -155,9 +155,13 @@ func (a *App) refresh() {
 
 			// 刷新当前账号状态（如果存在）
 			if a.ctx.Current != nil {
+				originalName := a.ctx.Current.Name
 				a.ctx.Current.RefreshStatus()
-				// 更新上下文信息
-				a.ctx.Refresh()
+				if a.ctx.Current.Name != originalName {
+					a.ctx.SwitchCurrent(a.ctx.Current)
+				} else {
+					a.ctx.Refresh()
+				}
 			}
 
 			if a.ctx.AutoDecrypt || a.ctx.HTTPEnabled {
@@ -257,8 +261,37 @@ func (a *App) initMenu() {
 		},
 	}
 
-	decryptData := &menu.Item{
+	restartAndGetDataKey := &menu.Item{
 		Index:       3,
+		Name:        "重启并获取密钥",
+		Description: "结束当前微信进程，重启后获取密钥",
+		Selected: func(i *menu.Item) {
+			modal := tview.NewModal().SetText("正在重启微信并获取密钥...")
+			a.mainPages.AddPage("modal", modal, true, true)
+			a.SetFocus(modal)
+
+			go func() {
+				err := a.m.RestartAndGetDataKey()
+
+				a.QueueUpdateDraw(func() {
+					if err != nil {
+						modal.SetText("操作失败: " + err.Error())
+					} else {
+						modal.SetText("操作成功，请检查密钥是否已更新")
+					}
+
+					modal.AddButtons([]string{"OK"})
+					modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+						a.mainPages.RemovePage("modal")
+					})
+					a.SetFocus(modal)
+				})
+			}()
+		},
+	}
+
+	decryptData := &menu.Item{
+		Index:       4,
 		Name:        "解密数据",
 		Description: "解密数据文件",
 		Selected: func(i *menu.Item) {
@@ -296,7 +329,7 @@ func (a *App) initMenu() {
 	}
 
 	httpServer := &menu.Item{
-		Index:       4,
+		Index:       5,
 		Name:        "启动 HTTP 服务",
 		Description: "启动本地 HTTP & MCP 服务器",
 		Selected: func(i *menu.Item) {
@@ -370,7 +403,7 @@ func (a *App) initMenu() {
 	}
 
 	autoDecrypt := &menu.Item{
-		Index:       5,
+		Index:       6,
 		Name:        "开启自动解密",
 		Description: "自动解密新增的数据文件",
 		Selected: func(i *menu.Item) {
@@ -448,20 +481,21 @@ func (a *App) initMenu() {
 	}
 
 	setting := &menu.Item{
-		Index:       6,
+		Index:       7,
 		Name:        "设置",
 		Description: "设置应用程序选项",
 		Selected:    a.settingSelected,
 	}
 
 	selectAccount := &menu.Item{
-		Index:       7,
+		Index:       8,
 		Name:        "切换账号",
 		Description: "切换当前操作的账号，可以选择进程或历史账号",
 		Selected:    a.selectAccountSelected,
 	}
 
 	a.menu.AddItem(getDataKey)
+	a.menu.AddItem(restartAndGetDataKey)
 	a.menu.AddItem(decryptData)
 	a.menu.AddItem(httpServer)
 	a.menu.AddItem(autoDecrypt)
@@ -469,7 +503,7 @@ func (a *App) initMenu() {
 	a.menu.AddItem(selectAccount)
 
 	a.menu.AddItem(&menu.Item{
-		Index:       8,
+		Index:       9,
 		Name:        "退出",
 		Description: "退出程序",
 		Selected: func(i *menu.Item) {
