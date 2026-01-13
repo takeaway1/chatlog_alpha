@@ -673,18 +673,30 @@ func (s *Service) populateMD5PathCache(messages []*model.Message) {
 	}
 }
 
-// handleImageFile processes an image file, handling decryption if it's a .dat file
+// handleImageFile processes an image file, handling decryption if it's a .dat file or file without extension
 func (s *Service) handleImageFile(c *gin.Context, absolutePath string) {
-	// If it's not a .dat file, redirect to the data handler
-	if !strings.HasSuffix(strings.ToLower(absolutePath), ".dat") {
+	// Check if the file needs decryption (either .dat extension or no extension)
+	needsDecryption := strings.HasSuffix(strings.ToLower(absolutePath), ".dat") ||
+		filepath.Ext(absolutePath) == ""
+
+	// If it doesn't need decryption, redirect to the data handler
+	if !needsDecryption {
 		relativePath := strings.TrimPrefix(absolutePath, s.conf.GetDataDir())
 		relativePath = strings.TrimPrefix(relativePath, string(filepath.Separator))
 		c.Redirect(http.StatusFound, "/data/"+relativePath)
 		return
 	}
 
-	// Check if already converted
-	outputPath := strings.TrimSuffix(absolutePath, filepath.Ext(absolutePath))
+	// Determine the base path for converted files
+	var outputPath string
+	if filepath.Ext(absolutePath) == "" {
+		// No extension, use the path as is
+		outputPath = absolutePath
+	} else {
+		// Has .dat extension, remove it
+		outputPath = strings.TrimSuffix(absolutePath, filepath.Ext(absolutePath))
+	}
+
 	var newRelativePath string
 	relativePathBase := strings.TrimPrefix(outputPath, s.conf.GetDataDir())
 	relativePathBase = strings.TrimPrefix(relativePathBase, string(filepath.Separator))
@@ -703,20 +715,22 @@ func (s *Service) handleImageFile(c *gin.Context, absolutePath string) {
 		return
 	}
 
-	// Decrypt and convert the .dat file
+	// Try to decrypt and convert the file
 	b, err := os.ReadFile(absolutePath)
 	if err != nil {
-		errors.Err(c, err)
+		// If file doesn't exist or can't be read, fallback to redirect
+		relativePath := strings.TrimPrefix(absolutePath, s.conf.GetDataDir())
+		relativePath = strings.TrimPrefix(relativePath, string(filepath.Separator))
+		c.Redirect(http.StatusFound, "/data/"+relativePath)
 		return
 	}
 
 	out, ext, err := dat2img.Dat2Image(b)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":  "Failed to parse .dat file",
-			"reason": err.Error(),
-			"path":   absolutePath,
-		})
+		// If decryption fails, fallback to serving the file as-is
+		relativePath := strings.TrimPrefix(absolutePath, s.conf.GetDataDir())
+		relativePath = strings.TrimPrefix(relativePath, string(filepath.Separator))
+		c.Redirect(http.StatusFound, "/data/"+relativePath)
 		return
 	}
 
@@ -742,7 +756,8 @@ func (s *Service) handleMediaData(c *gin.Context) {
 
 	ext := strings.ToLower(filepath.Ext(absolutePath))
 	switch {
-	case ext == ".dat":
+	case ext == ".dat", ext == "":
+		// Try to decrypt .dat files or files without extension
 		s.HandleDatFile(c, absolutePath)
 	default:
 		// 直接返回文件
@@ -760,6 +775,16 @@ func (s *Service) HandleDatFile(c *gin.Context, path string) {
 	}
 	out, ext, err := dat2img.Dat2Image(b)
 	if err != nil {
+		// If decryption fails, check if this is a file without extension
+		// If so, try to return it as-is
+		if filepath.Ext(path) == "" {
+			// Try to detect the file type and return appropriately
+			http.DetectContentType(b)
+			c.Data(http.StatusOK, http.DetectContentType(b), b)
+			return
+		}
+
+		// For .dat files that fail to decrypt, return error
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":  "Failed to parse .dat file",
 			"reason": err.Error(),

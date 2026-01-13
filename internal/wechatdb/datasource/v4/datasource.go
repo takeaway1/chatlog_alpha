@@ -686,18 +686,19 @@ func (ds *DataSource) GetMedia(ctx context.Context, _type string, key string) (*
 	}
 
 	query := fmt.Sprintf(`
-	SELECT 
+	SELECT
 		f.md5,
 		f.file_name,
 		f.file_size,
 		f.modify_time,
+		f.extra_buffer,
 		IFNULL(d1.username,""),
 		IFNULL(d2.username,"")
-	FROM 
+	FROM
 		%s f
-	LEFT JOIN 
+	LEFT JOIN
 		dir2id d1 ON d1.rowid = f.dir1
-	LEFT JOIN 
+	LEFT JOIN
 		dir2id d2 ON d2.rowid = f.dir2
 	`, table)
 	query += " WHERE f.md5 = ? OR f.file_name LIKE ? || '%'"
@@ -722,6 +723,7 @@ func (ds *DataSource) GetMedia(ctx context.Context, _type string, key string) (*
 			&mediaV4.Name,
 			&mediaV4.Size,
 			&mediaV4.ModifyTime,
+			&mediaV4.ExtraBuffer,
 			&mediaV4.Dir1,
 			&mediaV4.Dir2,
 		)
