@@ -131,12 +131,6 @@ func (d *DBManager) OpenDB(path string) (*sql.DB, error) {
 			log.Err(err).Msgf("获取临时拷贝文件 %s 失败", path)
 			return nil, err
 		}
-		if d.walEnabled {
-			if err := d.syncWalFiles(path, tempPath); err != nil {
-				log.Err(err).Msgf("同步 WAL 文件失败: %s", path)
-				return nil, err
-			}
-		}
 	}
 	db, err = sql.Open("sqlite3", tempPath)
 	if err != nil {
@@ -185,58 +179,6 @@ func (d *DBManager) Close() error {
 		db.Close()
 	}
 	return d.fm.Stop()
-}
-
-func (d *DBManager) syncWalFiles(dbPath, tempPath string) error {
-	if err := syncAuxFile(dbPath+"-wal", tempPath+"-wal"); err != nil {
-		return err
-	}
-	if err := syncAuxFile(dbPath+"-shm", tempPath+"-shm"); err != nil {
-		return err
-	}
-	return nil
-}
-
-func syncAuxFile(src, dst string) error {
-	if _, err := os.Stat(src); err != nil {
-		if os.IsNotExist(err) {
-			if err := os.Remove(dst); err != nil && !os.IsNotExist(err) {
-				return err
-			}
-			return nil
-		}
-		return err
-	}
-	return copyFileAtomic(src, dst)
-}
-
-func copyFileAtomic(src, dst string) error {
-	input, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer input.Close()
-
-	temp := dst + ".tmp"
-	output, err := os.Create(temp)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(output, input); err != nil {
-		output.Close()
-		os.Remove(temp)
-		return err
-	}
-	if err := output.Sync(); err != nil {
-		output.Close()
-		os.Remove(temp)
-		return err
-	}
-	if err := output.Close(); err != nil {
-		os.Remove(temp)
-		return err
-	}
-	return os.Rename(temp, dst)
 }
 
 func normalizeDBPath(path string) string {

@@ -311,9 +311,8 @@ func (s *Service) DecryptDBFile(dbFile string) error {
 				outputFile.Write(data)
 			}
 			if s.conf.GetWalEnabled() {
-				if err := s.syncWalFiles(dbFile, output); err != nil {
-					log.Debug().Err(err).Msgf("failed to sync wal files for %s", dbFile)
-				}
+				// Remove WAL files if they exist to prevent SQLite from reading encrypted WALs
+				s.removeWalFiles(output)
 			}
 			return nil
 		}
@@ -324,12 +323,22 @@ func (s *Service) DecryptDBFile(dbFile string) error {
 	log.Debug().Msgf("Decrypted %s to %s", dbFile, output)
 
 	if s.conf.GetWalEnabled() {
-		if err := s.syncWalFiles(dbFile, output); err != nil {
-			log.Debug().Err(err).Msgf("failed to sync wal files for %s", dbFile)
-		}
+		// Remove WAL files if they exist to prevent SQLite from reading encrypted WALs
+		s.removeWalFiles(output)
 	}
 
 	return nil
+}
+
+func (s *Service) removeWalFiles(dbFile string) {
+	walFile := dbFile + "-wal"
+	shmFile := dbFile + "-shm"
+	if err := os.Remove(walFile); err != nil && !os.IsNotExist(err) {
+		log.Debug().Err(err).Msgf("failed to remove wal file %s", walFile)
+	}
+	if err := os.Remove(shmFile); err != nil && !os.IsNotExist(err) {
+		log.Debug().Err(err).Msgf("failed to remove shm file %s", shmFile)
+	}
 }
 
 func (s *Service) getDebounceTime() time.Duration {
@@ -403,65 +412,6 @@ func (s *Service) normalizeDBFile(path string) string {
 
 func isWalFile(path string) bool {
 	return strings.HasSuffix(path, ".db-wal") || strings.HasSuffix(path, ".db-shm")
-}
-
-func (s *Service) syncWalFiles(dbFile, output string) error {
-	walSrc := dbFile + "-wal"
-	walDst := output + "-wal"
-	if err := syncAuxFile(walSrc, walDst); err != nil {
-		return err
-	}
-	shmSrc := dbFile + "-shm"
-	shmDst := output + "-shm"
-	if err := syncAuxFile(shmSrc, shmDst); err != nil {
-		return err
-	}
-	return nil
-}
-
-func syncAuxFile(src, dst string) error {
-	if _, err := os.Stat(src); err != nil {
-		if os.IsNotExist(err) {
-			if err := os.Remove(dst); err != nil && !os.IsNotExist(err) {
-				return err
-			}
-			return nil
-		}
-		return err
-	}
-	if err := util.PrepareDir(filepath.Dir(dst)); err != nil {
-		return err
-	}
-	return copyFileAtomic(src, dst)
-}
-
-func copyFileAtomic(src, dst string) error {
-	input, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer input.Close()
-
-	temp := dst + ".tmp"
-	output, err := os.Create(temp)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(output, input); err != nil {
-		output.Close()
-		os.Remove(temp)
-		return err
-	}
-	if err := output.Sync(); err != nil {
-		output.Close()
-		os.Remove(temp)
-		return err
-	}
-	if err := output.Close(); err != nil {
-		os.Remove(temp)
-		return err
-	}
-	return os.Rename(temp, dst)
 }
 
 func (s *Service) DecryptDBFiles() error {
@@ -663,9 +613,8 @@ func (s *Service) IncrementalDecryptDBFile(dbFile string) (bool, error) {
 		s.mutex.Unlock()
 	}
 
-	if err := s.syncWalFiles(dbFile, output); err != nil {
-		return true, err
-	}
+	// Remove WAL files if they exist to prevent SQLite from reading encrypted WALs
+	s.removeWalFiles(output)
 
 	if applied {
 		return true, nil
